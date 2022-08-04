@@ -64,6 +64,7 @@ class Evaluator(object):
 
     def run(self, eval_rounds: int = 100) -> EvalResult:
         durations = []
+        self._policy_net.eval()
         for i_round in range(eval_rounds):
             observation = self._env.reset()
             state = self._state_generator.gen_state(env=self._env, frames=observation, terminated=False)
@@ -75,5 +76,5 @@ class Evaluator(object):
                     durations.append(i_step + 1)
                     break
                 state = self._state_generator.gen_state(env=self._env, frames=observation, terminated=terminated)
-
+        self._policy_net.train()
         return EvalResult(durations)

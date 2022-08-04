@@ -9,6 +9,7 @@ import gym
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import torchinfo
 
 from dqn import DQN
 from replay_memory import ReplayMemory, Transition
@@ -24,6 +25,7 @@ DEFAULT_EPS_START = 0.9
 DEFAULT_EPS_END = 0.05
 DEFAULT_EPS_DECAY_STEPS = 200
 DEFAULT_TARGET_UPDATE_EPISODES = 10
+DEFAULT_MEMORY_SIZE = 10000
 
 
 class DQNTrainer(object):
@@ -37,7 +39,12 @@ class DQNTrainer(object):
                  eps_end: int = DEFAULT_EPS_END,
                  eps_decay_steps: int = DEFAULT_EPS_DECAY_STEPS,
                  target_update_episodes: int = DEFAULT_TARGET_UPDATE_EPISODES,
-                 random_seed: int = 42) -> None:
+                 target_update_step_mode: bool = False,
+                 random_seed: int = 42,
+                 memory_size: int = DEFAULT_MEMORY_SIZE,
+                 use_adam: bool = False,
+                 lr: float = 0.01,
+                 use_ddqn: bool = False) -> None:
         super().__init__()
 
         self._env = env
@@ -49,6 +56,7 @@ class DQNTrainer(object):
         self._eps_end = eps_end
         self._eps_decay_steps = eps_decay_steps
         self._target_update_episodes = target_update_episodes
+        self._target_update_step_mode = target_update_step_mode
 
         self._state_generator = state_generator
         observation = env.reset()
@@ -60,13 +68,20 @@ class DQNTrainer(object):
         self._target_net.load_state_dict(self._policy_net.state_dict())
         self._target_net.eval()
 
-        self._optimizer = optim.RMSprop(self._policy_net.parameters())
-        self._memory = ReplayMemory(10000)
+        self._model_info = torchinfo.summary(self._policy_net,
+                                             input_size=(self._batch_size, channel, screen_height, screen_width))
+
+        if use_adam:
+            self._optimizer = optim.Adam(self._policy_net.parameters(), lr=lr)
+        else:
+            self._optimizer = optim.RMSprop(self._policy_net.parameters(), lr=lr)
+        self._memory = ReplayMemory(memory_size)
 
         self._steps_done = 0
         self._episode_durations = []
         random.seed(random_seed)
 
+        self._use_ddqn = use_ddqn
     # def _gen_state(self, frames: LazyFrames, terminated: bool) -> typing.Optional[torch.Tensor]:
     #     if terminated:
     #         return None
@@ -84,7 +99,10 @@ class DQNTrainer(object):
                 # second column on max result is index of where max element was
                 # found, so we pick action with the larger expected reward.
                 state_tensor = state_tensor.to(self._device)
-                return self._policy_net(state_tensor).max(1)[1].view(1, 1).cpu()
+                self._policy_net.eval()
+                action_tensor = self._policy_net(state_tensor).max(1)[1].view(1, 1).cpu()
+                self._policy_net.train()
+                return action_tensor
         else:
             return torch.tensor([[self._env.action_space.sample()]], dtype=torch.long)
 
@@ -105,28 +123,38 @@ class DQNTrainer(object):
         action_batch = torch.cat(batch.action).to(self._device)
         reward_batch = torch.cat(batch.reward).to(self._device)
 
-        # Compute Q(s_t, a) - the model computes Q(s_t), then we select the
-        # columns of actions taken. These are the actions which would've been taken
-        # for each batch state according to policy_net
-        state_action_values = self._policy_net(state_batch).gather(1, action_batch)
-
         # Compute V(s_{t+1}) for all next states.
         # Expected values of actions for non_final_next_states are computed based
         # on the "older" target_net; selecting their best reward with max(1)[0].
         # This is merged based on the mask, such that we'll have either the expected
         # state value or 0 in case the state was final.
         next_state_values = torch.zeros(self._batch_size, device=self._device)
-        next_state_values[non_final_mask] = self._target_net(non_final_next_states).max(1)[0].detach()
+
+        if self._use_ddqn:
+            # Double DQN
+            with torch.no_grad():
+                self._policy_net.eval()
+                next_action = self._policy_net(non_final_next_states).max(1)[1].view(-1, 1).detach()
+                self._policy_net.train()
+            next_state_values[non_final_mask] = self._target_net(non_final_next_states).gather(1, next_action).squeeze().detach()
+        else:
+            next_state_values[non_final_mask] = self._target_net(non_final_next_states).max(1)[0].detach()
         # Compute the expected Q values
         expected_state_action_values = (next_state_values * self._gamma) + reward_batch
 
+        # Compute Q(s_t, a) - the model computes Q(s_t), then we select the
+        # columns of actions taken. These are the actions which would've been taken
+        # for each batch state according to policy_net
+        state_action_values = self._policy_net(state_batch).gather(1, action_batch)
+
         # Compute Huber loss
         criterion = nn.SmoothL1Loss()
+        # criterion = nn.MSELoss()
         loss = criterion(state_action_values, expected_state_action_values.unsqueeze(1))
         # Optimize the model
         self._optimizer.zero_grad()
         loss.backward()
-        nn.utils.clip_grad_value_(self._policy_net.parameters(), clip_value=1)
+        # nn.utils.clip_grad_value_(self._policy_net.parameters(), clip_value=1)
         # for param in self._policy_net.parameters():
         #     param.grad.data.clamp_(-1, 1)
         self._optimizer.step()
@@ -152,11 +180,18 @@ class DQNTrainer(object):
                 state_tensor = next_state_tensor
 
                 self._optimize_model()
+                if self._target_update_step_mode and self._steps_done % self._target_update_episodes == 0:
+                    self._target_net.load_state_dict(self._policy_net.state_dict())
+
                 if terminated:
                     self._episode_durations.append(t + 1)
                     if episode_end_callback is not None:
                         episode_end_callback(i, t + 1, self._episode_durations)
                     break
 
-            if i % self._target_update_episodes == 0:
+            if not self._target_update_step_mode and i % self._target_update_episodes == 0:
                 self._target_net.load_state_dict(self._policy_net.state_dict())
+
+    @property
+    def model_info(self) -> torchinfo.ModelStatistics:
+        return self._model_info

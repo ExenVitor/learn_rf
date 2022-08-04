@@ -26,16 +26,25 @@ class DQN(nn.Module):
         conv_w = conv2d_size_out(size=conv_w, kernel_size=5, stride=2)
         conv_h = conv2d_size_out(size=conv_h, kernel_size=5, stride=2)
 
-        self.conv3 = nn.Conv2d(32, 32, kernel_size=5, stride=2)
-        self.bn3 = nn.BatchNorm2d(32)
-        conv_w = conv2d_size_out(size=conv_w, kernel_size=5, stride=2)
-        conv_h = conv2d_size_out(size=conv_h, kernel_size=5, stride=2)
+        # self.conv3 = nn.Conv2d(32, 32, kernel_size=4, stride=2)
+        # self.bn3 = nn.BatchNorm2d(32)
+        # conv_w = conv2d_size_out(size=conv_w, kernel_size=3, stride=2)
+        # conv_h = conv2d_size_out(size=conv_h, kernel_size=3, stride=2)
+
+        # self.conv3 = nn.Conv2d(32, 32, kernel_size=5)
+        # self.bn3 = nn.BatchNorm2d(32)
+        # conv_w = conv2d_size_out(size=conv_w, kernel_size=5)
+        # conv_h = conv2d_size_out(size=conv_h, kernel_size=5)
 
         linear_input_size = conv_w * conv_h * 32
-        self.head = nn.Linear(in_features=linear_input_size, out_features=outputs)
+
+        self.fc1 = nn.Linear(in_features=linear_input_size, out_features=128)
+        # self.dropout1 = nn.Dropout()
+        self.head = nn.Linear(in_features=128, out_features=outputs)
 
     def forward(self, x: torch.Tensor):
         x = F.relu(self.bn1(self.conv1(x)))
         x = F.relu(self.bn2(self.conv2(x)))
-        x = F.relu(self.bn3(self.conv3(x)))
-        return self.head(x.view(x.size(0), -1))
+        # x = F.relu(self.bn3(self.conv3(x)))
+        x = F.relu(self.fc1(x.view(x.size(0), -1)))
+        return self.head(x)
