@@ -18,7 +18,7 @@ CUSTOM_MOVEMENTS = [
 ]
 
 OUTPUT_BASE_DIR = "outputs"
-NUM_EPISODES = 4000
+NUM_EPISODES = 40000
 
 
 def main():

@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
+import os
 import torch
 from screen_convert import SimpleConverter
 from state_gen import StackStateGenerator
@@ -33,7 +34,8 @@ def main(model_id: str):
     evaluator = Evaluator(env=eval_env,
                           state_generator=state_generator,
                           device=device,
-                          agent=agent)
+                          agent=agent,
+                          video_record_dir=os.path.join(checkpoint_manager._model_path, "eval_video"))
 
     eval_result = evaluator.run(render=True)
 
@@ -41,4 +43,4 @@ def main(model_id: str):
 
 
 if __name__ == '__main__':
-    main(model_id="20220810_170832_SuperMario_DDQN")
+    main(model_id="20220812_191147_SuperMario_DDQN")
