@@ -43,4 +43,5 @@ def main(model_id: str):
 
 
 if __name__ == '__main__':
+    # 填入模型id
     main(model_id="20220812_191147_SuperMario_DDQN")
